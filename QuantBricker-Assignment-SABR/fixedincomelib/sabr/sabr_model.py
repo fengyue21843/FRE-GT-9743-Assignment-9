@@ -5,6 +5,7 @@ from scipy.linalg import block_diag
 from matplotlib.dates import SA
 import numpy as np
 import pandas as pd
+from torch import tensor
 import QuantLib as ql
 from zmq import has
 from fixedincomelib.date import *
@@ -386,7 +387,19 @@ class SABRModelComponent(ModelComponent):
         - The output should be a dictionary mapping SABRParameters -> float
         """
         # TODO: implement
-        pass
+        result = {}
+        all_parameters = [
+            SABRParameters.NV,
+            SABRParameters.BETA,
+            SABRParameters.NU,
+            SABRParameters.RHO,
+        ]
+
+        for param in all_parameters:
+            result[param] = self.interpolator_[param].interpolate(expiry, tenor)
+
+        return result
+
     
     def get_sabr_parameter_gradient_wrt_state(
         self,
@@ -407,8 +420,28 @@ class SABRModelComponent(ModelComponent):
         - If accumulate=True, add to gradient_vector; otherwise overwrite it
         """
         # TODO: implement
-        pass
-            
-            
+        all_parameters = [
+            SABRParameters.NV,
+            SABRParameters.BETA,
+            SABRParameters.NU,
+            SABRParameters.RHO,
+        ]
+
+        gradient_components = []
+        
+        for i, param in enumerate(all_parameters):
+            interpolator = self.interpolator_[param]
+            grad = interpolator.gradient_wrt_ordinate(expiry, tenor)
+            grad_flat = grad.reshape(-1)
+            grad_scaled = grad_flat * scalers[i]
+            gradient_components.append(grad_scaled)
+
+        full_gradient = np.concatenate(gradient_components)
+
+        if accumulate:
+            gradient_vector[:] += full_gradient
+        else:
+            gradient_vector[:] = full_gradient
+
 
 

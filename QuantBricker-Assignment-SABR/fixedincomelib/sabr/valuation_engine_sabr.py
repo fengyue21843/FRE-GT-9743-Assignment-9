@@ -72,6 +72,27 @@ class ValuationEngineRFRCapletFloorlet(ValuationEngineProduct):
         return cls.__name__
 
     def calculate_value(self):
+        # Check if product is a Cap/Floor (portfolio of caplets)
+        if isinstance(self.product_, ProductRFRCapFloor):
+            self.value_ = 0.0
+            self.cash_ = 0.0
+            self.option_value_ = 0.0
+            # Sum over all caplets
+            for i, caplet in enumerate(self.product_.caplets_):
+                caplet_engine = ValuationEngineRFRCapletFloorlet(
+                    self.model_,
+                    self.vpc_,
+                    caplet,
+                    self.request_
+                )
+                caplet_engine.calculate_value()
+                self.value_ += caplet_engine.value_
+                self.cash_ += caplet_engine.cash_
+                self.option_value_ += caplet_engine.option_value_
+                # Save the first caplet's SABR parameters as reference
+                if i == 0:
+                    self.sabr_result_ = caplet_engine.sabr_result_.copy() if caplet_engine.sabr_result_ else {}
+            return
 
         # What do we want to achieve here ?
         # | ------------ |  --  | ------------| --- |
@@ -145,6 +166,44 @@ class ValuationEngineRFRCapletFloorlet(ValuationEngineProduct):
             self.value_ = scaler * self.df_ * self.accrual_ * self.option_value_
 
     def calculate_first_order_risk(self, gradient=None, scaler = 1.0, accumulate = False):
+        # Check if product is a Cap/Floor (portfolio of caplets)
+        if isinstance(self.product_, ProductRFRCapFloor):
+            # Initialize local gradient to accumulate caplet risks
+            local_grad = []
+            self.model_.resize_gradient(local_grad)
+            for i in range(len(local_grad)):
+                local_grad[i] = 0.0
+            
+            # Accumulate risk from all caplets
+            for caplet in self.product_.caplets_:
+                caplet_engine = ValuationEngineRFRCapletFloorlet(
+                    self.model_,
+                    self.vpc_,
+                    caplet,
+                    self.request_
+                )
+                # Calculate value first to ensure all state variables are set
+                caplet_engine.calculate_value()
+                # Use a temporary gradient for each caplet to avoid resize clearing
+                temp_grad = []
+                caplet_engine.calculate_first_order_risk(temp_grad, scaler, accumulate=False)
+                # Manually accumulate into local_grad
+                for i in range(len(local_grad)):
+                    local_grad[i] += temp_grad[i]
+            
+            # Handle gradient parameter (same as single caplet logic)
+            if gradient is None:
+                gradient = []
+            self.model_.resize_gradient(gradient)
+            
+            if accumulate:
+                for i in range(len(gradient)):
+                    gradient[i] += local_grad[i]
+            else:
+                gradient[:] = local_grad
+            
+            self.first_order_risk_ = gradient
+            return
 
         if self.value_ is None:
             self.calculate_value()
@@ -245,6 +304,39 @@ class ValuationEngineRFRCapletFloorlet(ValuationEngineProduct):
     
     def create_cash_flows_report(self) -> CashflowsReport:
         this_cf = CashflowsReport()
+        
+        # Check if product is a Cap/Floor (portfolio of caplets)
+        if isinstance(self.product_, ProductRFRCapFloor):
+            # Create a row for each caplet
+            for i, caplet in enumerate(self.product_.caplets_):
+                caplet_engine = ValuationEngineRFRCapletFloorlet(
+                    self.model_,
+                    self.vpc_,
+                    caplet,
+                    self.request_
+                )
+                caplet_engine.calculate_value()
+                
+                this_cf.add_row(
+                    i,
+                    self.product_._product_type,
+                    self.val_engine_type(),
+                    caplet_engine.notional_,
+                    caplet_engine.sign_,
+                    caplet_engine.pay_date_,
+                    caplet_engine.value_ / caplet_engine.df_ if caplet_engine.df_ != 0.0 else 0.0,
+                    caplet_engine.value_,
+                    caplet_engine.df_,
+                    fixing_date=caplet_engine.expiry_date_,
+                    start_date=caplet_engine.effective_date_,
+                    end_date=caplet_engine.termination_date_,
+                    accrued=caplet_engine.accrual_,
+                    index_or_fixed=caplet_engine.overnight_index_.name(),
+                    index_value=caplet_engine.forward_,
+                )
+            return this_cf
+        
+        # Original single caplet logic
         this_cf.add_row(
             0,
             self.product_._product_type,
@@ -274,6 +366,7 @@ class ValuationEngineRFRCapletFloorlet(ValuationEngineProduct):
 
 _SABR_ENGINE_MAP = {
     ProductRFRCapletFloorlet._product_type:     ValuationEngineRFRCapletFloorlet,
+    ProductRFRCapFloor._product_type:           ValuationEngineRFRCapletFloorlet,
 }
 
 for prod_type, eng_cls in _SABR_ENGINE_MAP.items():

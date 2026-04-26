@@ -7,7 +7,7 @@ from typing import List, Optional, Union
 from dataclasses import dataclass
 import QuantLib as ql
 import numpy as np
-from regex import E
+# from regex import E
 from fixedincomelib.date.utilities import add_period, frequency_from_period
 from fixedincomelib.market.basics import *
 from fixedincomelib.market.registries import IndexRegistry, DataConventionRegistry
@@ -280,7 +280,19 @@ class ProductRFRCapFloor(Product):
         # Build one ProductRFRCapletFloorlet for each accrual period in the schedule,
         # and append it to self.caplets_.
         for _, row in schedule.iterrows():
-            pass
+            caplet = ProductRFRCapletFloorlet(
+                effective_date = Date(row["StartDate"]),
+                expiry_offset = Period("0D"),
+                term_or_termination_date=TermOrTerminationDate(Date(row['EndDate']).ISO()),
+                payment_date = Date(row['PaymentDate']),
+                on_index = self.on_index_str_,
+                strike = self.strike_,
+                notional = self.notional_,
+                cap_or_floor = self.cap_or_floor_,
+                accrual_basis = self.accrual_basis_,
+                long_or_short = self.long_or_short_
+            )
+            self.caplets_.append(caplet)
         
         if len(self.caplets_) > 0:
             self.last_date_ = self.caplets_[-1].payment_date
@@ -343,6 +355,33 @@ class ProductRFRCapFloor(Product):
     def currency(self) -> Currency:
         return self.currency_
     
+    @property
+    def expiry_date(self) -> Date:
+        """Return the expiry date of the first caplet."""
+        if len(self.caplets_) > 0:
+            return self.caplets_[0].expiry_date
+        else:
+            #Fallback to effective_date if no caplets
+            return self.effective_date_
+    @property
+    def payment_date(self) -> Date:
+        """Return the payment date of the last caplet"""
+        if len(self.caplets_) > 0:
+            return self.caplets_[-1].payment_date
+        else:
+            # Fallback to termination_date if no caplets
+            return self.termination_date_
+
+    @property
+    def accrual_(self) -> float:
+        """Return the total accrual fraction"""
+        if len(self.caplets_) > 0:
+            # Sum all caplet accruals
+            return sum(caplet.accrual_ for caplet in self.caplets_)
+        else:
+            return 0.0
+
+
     def num_caplets(self) -> int:
         return len(self.caplets_)
     

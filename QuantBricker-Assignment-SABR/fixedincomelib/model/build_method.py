@@ -36,7 +36,7 @@ class BuildMethod(ABC):
                 continue
             if k.upper() not in valid_keys:
                 raise Exception(f'{k} is not a valid key.')
-        for k in valid_keys:
+        for k in sorted(valid_keys):
             if k not in self.bm_dict:
                 self.bm_dict[k.upper()] = ''
     
@@ -75,10 +75,9 @@ class BuildMethod(ABC):
         content = {}
         content['VERSION'] = self._version
         content['TYPE'] = self._build_method_type
-        content['TARGET'] = self.bm_dict['TARGET']
-        valid_keys = self.get_valid_keys()
-        for each in valid_keys:
-            content[each.upper()] = self.bm_dict[each.upper()]
+        
+        for key, value in self.bm_dict.items():
+            content[key.upper()] = value
         return content
 
     @classmethod
